@@ -1,14 +1,19 @@
 import streamlit as st
 import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
 
 # --- Konfigurasi Aplikasi Streamlit ---
+# Mengatur judul tab, ikon, dan tata letak halaman menjadi lebar
 st.set_page_config(
     page_title="Forecasting Kondisi Motor",
-    page_icon="🔮",
+    page_icon="📈",
     layout="wide"
 )
 
 # --- Konfigurasi Awal & Ambang Batas (Thresholds) ---
+# Nilai-nilai ini adalah contoh dan harus disesuaikan dengan spesifikasi motor Anda.
 VOLTAGE_NORMAL = 380
 ARUS_NORMAL = 5.0
 
@@ -51,95 +56,105 @@ kenaikan_vibrasi_per_jam = st.sidebar.slider('Kenaikan Vibrasi/Jam', 0.0, 2.0, 0
 # ==============================================================================
 # --- Main Panel untuk Output ---
 # ==============================================================================
-st.title("🔮 Dashboard Forecasting & Kesehatan Motor Listrik")
+st.title("📈 Dashboard Forecasting & Kesehatan Motor Listrik")
 st.markdown("---")
 
+# --- BAGIAN 1: ANALISIS KONDISI SAAT INI DENGAN GRAFIK GAUGE ---
+st.header("1. Kondisi Saat Ini")
 
-# --- BAGIAN 1: ANALISIS KONDISI SAAT INI (***UPDATED***) ---
-st.header("1. Analisis Kondisi Saat Ini")
+col1, col2, col3 = st.columns(3)
 
-# Daftar untuk menampung pesan penyebab perubahan status
-pesan_penyebab = []
-status = "Normal"  # Status default
+# Fungsi untuk membuat grafik gauge
+def create_gauge(value, title, min_val, max_val, warn_val, danger_val):
+    """Membuat grafik gauge setengah lingkaran dengan zona warna."""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=value,
+        title={'text': title, 'font': {'size': 20}},
+        number={'font': {'size': 40}},
+        gauge={
+            'axis': {'range': [min_val, max_val], 'tickwidth': 1, 'tickcolor': "darkblue"},
+            'bar': {'color': "rgba(0,0,0,0)"},  # Bar utama dibuat transparan
+            'steps': [
+                {'range': [min_val, warn_val], 'color': "lightgreen"},
+                {'range': [warn_val, danger_val], 'color': "yellow"},
+                {'range': [danger_val, max_val], 'color': "red"}
+            ],
+            'threshold': {
+                'line': {'color': "black", 'width': 5}, # Ini adalah jarum penunjuk
+                'thickness': 1,
+                'value': value
+            }
+        }
+    ))
+    fig.update_layout(height=250, margin={'t':50, 'b':30, 'l':30, 'r':30})
+    return fig
 
-# Analisis setiap variabel
+# Mengambil nilai suhu bearing maksimum untuk ditampilkan di gauge
 max_temp_bearing = max(temp_bearing_depan, temp_bearing_belakang)
 
-# Cek Suhu Motor
-if temp_motor >= TEMP_MOTOR_BAHAYA:
-    status = "Bahaya"
-    pesan_penyebab.append(f"🔥 **Suhu Motor Kritis**: `{temp_motor}°C` (Batas: {TEMP_MOTOR_BAHAYA}°C)")
-elif temp_motor >= TEMP_MOTOR_PERINGATAN:
-    status = "Peringatan"
-    pesan_penyebab.append(f"⚠️ **Suhu Motor Tinggi**: `{temp_motor}°C` (Batas: {TEMP_MOTOR_PERINGATAN}°C)")
-
-# Cek Suhu Bearing
-if max_temp_bearing >= TEMP_BEARING_BAHAYA:
-    if status != "Bahaya": status = "Bahaya"
-    pesan_penyebab.append(f"🔥 **Suhu Bearing Kritis**: `{max_temp_bearing}°C` (Batas: {TEMP_BEARING_BAHAYA}°C)")
-elif max_temp_bearing >= TEMP_BEARING_PERINGATAN:
-    if status == "Normal": status = "Peringatan"
-    pesan_penyebab.append(f"⚠️ **Suhu Bearing Tinggi**: `{max_temp_bearing}°C` (Batas: {TEMP_BEARING_PERINGATAN}°C)")
-
-# Cek Arus
-if arus >= ARUS_BAHAYA:
-    if status != "Bahaya": status = "Bahaya"
-    pesan_penyebab.append(f"⚡ **Arus Sangat Tinggi (Overload)**: `{arus:.1f} A` (Batas: {ARUS_BAHAYA:.1f} A)")
-elif arus >= ARUS_PERINGATAN:
-    if status == "Normal": status = "Peringatan"
-    pesan_penyebab.append(f"⚡ **Arus Melebihi Normal**: `{arus:.1f} A` (Batas: {ARUS_PERINGATAN:.1f} A)")
-
-# Cek Vibrasi
-if vibrasi_max_input >= VIBRASI_BAHAYA:
-    if status != "Bahaya": status = "Bahaya"
-    pesan_penyebab.append(f"🚨 **Vibrasi Kritis**: `{vibrasi_max_input:.1f} mm/s` (Batas: {VIBRASI_BAHAYA} mm/s)")
-elif vibrasi_max_input >= VIBRASI_PERINGATAN:
-    if status == "Normal": status = "Peringatan"
-    pesan_penyebab.append(f"🚨 **Vibrasi Tinggi**: `{vibrasi_max_input:.1f} mm/s` (Batas: {VIBRASI_PERINGATAN} mm/s)")
-
-# Tampilkan Status Utama
-if status == "Normal":
-    st.success("✅ **KONDISI SAAT INI: NORMAL**")
-else:
-    # Tampilkan penyebabnya terlebih dahulu
-    st.write("#### Detail Penyebab Perubahan Status:")
-    for pesan in pesan_penyebab:
-        st.write(f"&bull; {pesan}")
-    
-    # Baru tampilkan status keseluruhan
-    if status == "Peringatan":
-        st.warning("⚠️ **KONDISI KESELURUHAN: PERINGATAN**")
-    else: # Bahaya
-        st.error("🛑 **KONDISI KESELURUHAN: BAHAYA**")
+# Menampilkan Gauges di tiga kolom
+with col1:
+    st.plotly_chart(create_gauge(temp_motor, "Suhu Motor (°C)", 20, 120, TEMP_MOTOR_PERINGATAN, TEMP_MOTOR_BAHAYA), use_container_width=True)
+with col2:
+    st.plotly_chart(create_gauge(max_temp_bearing, "Suhu Bearing (°C)", 20, 120, TEMP_BEARING_PERINGATAN, TEMP_BEARING_BAHAYA), use_container_width=True)
+with col3:
+    st.plotly_chart(create_gauge(vibrasi_max_input, "Vibrasi (mm/s)", 0, 10, VIBRASI_PERINGATAN, VIBRASI_BAHAYA), use_container_width=True)
 
 st.markdown("---")
 
-# --- BAGIAN 2: PREDIKSI & PROGNOSTIK (FORECASTING) ---
-st.header("2. Prediksi & Prognostik (Forecasting)")
+# --- BAGIAN 2: PROYEKSI FORECASTING DENGAN GRAFIK GARIS ---
+st.header("2. Proyeksi Forecasting")
 
-def hitung_sisa_waktu(nilai_sekarang, laju_kenaikan, ambang_batas):
-    if laju_kenaikan <= 0:
-        return np.inf
-    if nilai_sekarang >= ambang_batas:
-        return 0
-    return (ambang_batas - nilai_sekarang) / laju_kenaikan
+# Fungsi untuk menghitung proyeksi waktu
+def hitung_proyeksi(nilai_awal, laju_kenaikan, waktu_maks=24):
+    """Menghasilkan array waktu dan nilai proyeksi berdasarkan laju kenaikan."""
+    if laju_kenaikan > 0:
+        waktu = np.arange(0, waktu_maks + 0.1, 0.5)  # Proyeksi hingga 24 jam
+    else:
+        waktu = np.array([0, waktu_maks])  # Hanya titik awal dan akhir jika tidak ada kenaikan
+    proyeksi = nilai_awal + laju_kenaikan * waktu
+    return waktu, proyeksi
 
-waktu_prediksi = [
-    {'parameter': 'Suhu Motor', 'waktu_ke_bahaya': hitung_sisa_waktu(temp_motor, kenaikan_temp_motor_per_jam, TEMP_MOTOR_BAHAYA)},
-    {'parameter': 'Suhu Bearing', 'waktu_ke_bahaya': hitung_sisa_waktu(max_temp_bearing, kenaikan_temp_bearing_per_jam, TEMP_BEARING_BAHAYA)},
-    {'parameter': 'Vibrasi', 'waktu_ke_bahaya': hitung_sisa_waktu(vibrasi_max_input, kenaikan_vibrasi_per_jam, VIBRASI_BAHAYA)}
-]
-
-prediksi_terdekat = min(p['waktu_ke_bahaya'] for p in waktu_prediksi)
-if prediksi_terdekat == np.inf:
-    st.info("Tidak ada tren kenaikan yang diinputkan. Prediksi tidak dapat dibuat.")
-elif prediksi_terdekat == 0:
-    st.error("**Motor sudah berada dalam atau di atas ambang batas Bahaya.**")
+# Cek apakah ada tren kenaikan untuk ditampilkan di grafik
+if kenaikan_temp_motor_per_jam == 0 and kenaikan_temp_bearing_per_jam == 0 and kenaikan_vibrasi_per_jam == 0:
+    st.info("Tidak ada tren kenaikan yang diinputkan. Grafik proyeksi tidak ditampilkan.")
 else:
-    parameter_kritis = [p['parameter'] for p in waktu_prediksi if p['waktu_ke_bahaya'] == prediksi_terdekat][0]
-    st.metric(
-        label=f"Prediksi Status BAHAYA Pertama dalam",
-        value=f"~{prediksi_terdekat:.1f} Jam",
-        delta=f"Disebabkan oleh tren kenaikan {parameter_kritis}",
-        delta_color="inverse"
+    # Membuat Subplots untuk ketiga grafik proyeksi
+    fig_forecast = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=('Proyeksi Suhu Motor', 'Proyeksi Suhu Bearing', 'Proyeksi Vibrasi')
     )
+
+    # 1. Data dan Plot Proyeksi Suhu Motor
+    waktu, proyeksi = hitung_proyeksi(temp_motor, kenaikan_temp_motor_per_jam)
+    fig_forecast.add_trace(go.Scatter(x=waktu, y=proyeksi, mode='lines', name='Suhu Motor', line={'color':'#636EFA'}), row=1, col=1)
+    fig_forecast.add_hline(y=TEMP_MOTOR_PERINGATAN, line_dash="dash", line_color="orange", annotation_text="Peringatan", row=1, col=1)
+    fig_forecast.add_hline(y=TEMP_MOTOR_BAHAYA, line_dash="dash", line_color="red", annotation_text="Bahaya", row=1, col=1)
+
+    # 2. Data dan Plot Proyeksi Suhu Bearing
+    waktu, proyeksi = hitung_proyeksi(max_temp_bearing, kenaikan_temp_bearing_per_jam)
+    fig_forecast.add_trace(go.Scatter(x=waktu, y=proyeksi, mode='lines', name='Suhu Bearing', line={'color':'#EF553B'}), row=2, col=1)
+    fig_forecast.add_hline(y=TEMP_BEARING_PERINGATAN, line_dash="dash", line_color="orange", annotation_text="Peringatan", row=2, col=1)
+    fig_forecast.add_hline(y=TEMP_BEARING_BAHAYA, line_dash="dash", line_color="red", annotation_text="Bahaya", row=2, col=1)
+
+    # 3. Data dan Plot Proyeksi Vibrasi
+    waktu, proyeksi = hitung_proyeksi(vibrasi_max_input, kenaikan_vibrasi_per_jam)
+    fig_forecast.add_trace(go.Scatter(x=waktu, y=proyeksi, mode='lines', name='Vibrasi', line={'color':'#00CC96'}), row=3, col=1)
+    fig_forecast.add_hline(y=VIBRASI_PERINGATAN, line_dash="dash", line_color="orange", annotation_text="Peringatan", row=3, col=1)
+    fig_forecast.add_hline(y=VIBRASI_BAHAYA, line_dash="dash", line_color="red", annotation_text="Bahaya", row=3, col=1)
+
+    # Update layout keseluruhan
+    fig_forecast.update_layout(height=700, showlegend=False, margin={'t':50, 'b':30})
+    fig_forecast.update_yaxes(title_text="Suhu (°C)", row=1, col=1)
+    fig_forecast.update_yaxes(title_text="Suhu (°C)", row=2, col=1)
+    fig_forecast.update_yaxes(title_text="Vibrasi (mm/s)", row=3, col=1)
+    fig_forecast.update_xaxes(title_text="Waktu (Jam ke Depan)", row=3, col=1)
+
+    st.plotly_chart(fig_forecast, use_container_width=True)
+
+st.markdown("---")
+st.caption("Aplikasi Simulasi & Forecasting Kondisi Motor v1.0")
+
