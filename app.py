@@ -157,4 +157,3 @@ else:
 
 st.markdown("---")
 st.caption("Aplikasi Simulasi & Forecasting Kondisi Motor v1.0")
-
