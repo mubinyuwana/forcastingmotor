@@ -5,21 +5,22 @@ from plotly.subplots import make_subplots
 import pandas as pd
 
 # --- Konfigurasi Aplikasi Streamlit ---
-# Mengatur judul tab, ikon, dan tata letak halaman menjadi lebar
 st.set_page_config(
     page_title="Forecasting Kondisi Motor",
     page_icon="📈",
     layout="wide"
 )
 
-# --- Konfigurasi Awal & Ambang Batas (Thresholds) ---
-# Nilai-nilai ini adalah contoh dan harus disesuaikan dengan spesifikasi motor Anda.
+# --- Konfigurasi Awal & Ambang Batas ---
+ARUS_NORMAL = 5.0
 TEMP_MOTOR_PERINGATAN = 70.0
 TEMP_MOTOR_BAHAYA = 90.0
 TEMP_BEARING_PERINGATAN = 65.0
 TEMP_BEARING_BAHAYA = 85.0
 VIBRASI_PERINGATAN = 2.8
 VIBRASI_BAHAYA = 4.5
+ARUS_PERINGATAN = ARUS_NORMAL * 1.15
+ARUS_BAHAYA = ARUS_NORMAL * 1.30
 
 # ==============================================================================
 # --- UI Sidebar untuk Input ---
@@ -27,196 +28,154 @@ VIBRASI_BAHAYA = 4.5
 st.sidebar.title("🔧 Panel Kontrol")
 st.sidebar.info("Geser slider untuk mengubah nilai pengukuran dan tren kenaikan.")
 
-# --- Grup Slider Nilai Saat Ini ---
 st.sidebar.subheader("📊 Nilai Pengukuran Saat Ini")
 temp_motor = st.sidebar.slider('Suhu Badan Motor', 20.0, 120.0, 45.0, 0.5, '%.1f°C')
 temp_bearing_depan = st.sidebar.slider('Suhu Bearing Depan', 20.0, 120.0, 40.0, 0.5, '%.1f°C')
 temp_bearing_belakang = st.sidebar.slider('Suhu Bearing Belakang', 20.0, 120.0, 40.0, 0.5, '%.1f°C')
 vibrasi_max_input = st.sidebar.slider('Vibrasi Maksimum Terukur', 0.0, 10.0, 1.5, 0.1, '%.1f mm/s')
+arus = st.sidebar.slider('Arus Motor (Ampere)', 0.0, 10.0, 5.1, 0.1, '%.1f A')
 
-# --- Grup Slider Input Untuk Forecasting ---
 st.sidebar.subheader("📈 Tren Kenaikan (Input Forecasting)")
 st.sidebar.caption("Inputkan laju kenaikan nilai per jam untuk memprediksi sisa waktu operasi.")
 kenaikan_temp_motor_per_jam = st.sidebar.slider('Kenaikan Suhu Motor/Jam', 0.0, 5.0, 0.1, 0.1, '%.1f °C/jam')
 kenaikan_temp_bearing_per_jam = st.sidebar.slider('Kenaikan Suhu Bearing/Jam', 0.0, 5.0, 0.0, 0.1, '%.1f °C/jam')
 kenaikan_vibrasi_per_jam = st.sidebar.slider('Kenaikan Vibrasi/Jam', 0.0, 2.0, 0.0, 0.05, '%.2f mm/s/jam')
-
+kenaikan_arus_per_jam = st.sidebar.slider('Kenaikan Arus/Jam', 0.0, 1.0, 0.0, 0.05, '%.2f A/jam')
 
 # ==============================================================================
 # --- Main Panel untuk Output ---
 # ==============================================================================
 st.title("📈 Dashboard Forecasting & Kesehatan Motor Listrik")
+
+# Menampilkan parameter operasional statis
+col_ops1, col_ops2 = st.columns(2)
+col_ops1.metric(label="Tegangan Operasional", value="380V AC", delta="3-Phase", delta_color="off")
+col_ops2.metric(label="Arus Normal", value=f"{ARUS_NORMAL} A")
+
 st.markdown("---")
 
-# --- BAGIAN 1: ANALISIS KONDISI SAAT INI DENGAN LAYOUT BARU ---
+# --- BAGIAN 1: ANALISIS KONDISI SAAT INI ---
 st.header("1. Kondisi Saat Ini")
 
-# Fungsi untuk membuat grafik gauge yang lebih modern (bullet chart)
 def create_modern_gauge(value, title, min_val, max_val, warn_val, danger_val):
-    """Membuat grafik gauge modern berbentuk bullet chart."""
     fig = go.Figure(go.Indicator(
         mode="number+gauge",
         gauge={
-            'shape': "bullet",
-            'axis': {'range': [None, max_val]},
-            'threshold': {
-                'line': {'color': "black", 'width': 3},
-                'thickness': 0.8,
-                'value': value},
+            'shape': "bullet", 'axis': {'range': [None, max_val]},
+            'threshold': {'line': {'color': "black", 'width': 3}, 'thickness': 0.8, 'value': value},
             'steps': [
-                {'range': [min_val, warn_val], 'color': "lightgreen"},
-                {'range': [warn_val, danger_val], 'color': "yellow"},
-                {'range': [danger_val, max_val], 'color': "red"}],
+                {'range': [min_val, warn_val], 'color': "#2ECC71"}, # Hijau
+                {'range': [warn_val, danger_val], 'color': "#F1C40F"}, # Kuning
+                {'range': [danger_val, max_val], 'color': "#E74C3C"}], # Merah
         },
         value=value,
-        number={'font': {'size': 48}},
+        number={'font': {'size': 48, 'color': '#34495E'}},
         domain={'x': [0.1, 1], 'y': [0.2, 0.8]}
     ))
-    fig.update_layout(height=120, margin={'t':10, 'b':10, 'l':10, 'r':10})
+    fig.update_layout(height=120, margin={'t':10, 'b':10, 'l':10, 'r':10}, paper_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# Menentukan status keseluruhan di awal
 max_temp_bearing = max(temp_bearing_depan, temp_bearing_belakang)
 status = "Normal"
-if (temp_motor >= TEMP_MOTOR_BAHAYA or max_temp_bearing >= TEMP_BEARING_BAHAYA or vibrasi_max_input >= VIBRASI_BAHAYA):
+if (temp_motor >= TEMP_MOTOR_BAHAYA or max_temp_bearing >= TEMP_BEARING_BAHAYA or vibrasi_max_input >= VIBRASI_BAHAYA or arus >= ARUS_BAHAYA):
     status = "Bahaya"
-elif (temp_motor >= TEMP_MOTOR_PERINGATAN or max_temp_bearing >= TEMP_BEARING_PERINGATAN or vibrasi_max_input >= VIBRASI_PERINGATAN):
+elif (temp_motor >= TEMP_MOTOR_PERINGATAN or max_temp_bearing >= TEMP_BEARING_PERINGATAN or vibrasi_max_input >= VIBRASI_PERINGATAN or arus >= ARUS_PERINGATAN):
     status = "Peringatan"
 
-# Menampilkan status keseluruhan
 if status == "Normal":
     st.success("✅ **KONDISI KESELURUHAN: NORMAL**")
 elif status == "Peringatan":
     st.warning("⚠️ **KONDISI KESELURUHAN: PERINGATAN**")
-else: # Bahaya
+else:
     st.error("🛑 **KONDISI KESELURUHAN: BAHAYA**")
-
-st.markdown("---") # Garis pemisah
-
-# --- Layout untuk setiap parameter ---
-def display_parameter_status(title, value, unit, warn_val, danger_val, min_val, max_val, info_normal, info_warn, info_danger):
-    col_text, col_gauge = st.columns([1, 1])
-    with col_text:
-        st.subheader(title)
-        if value < warn_val:
-            st.write(info_normal)
-        elif value < danger_val:
-            st.write(info_warn)
-        else:
-            st.write(info_danger)
-    with col_gauge:
-        st.plotly_chart(create_modern_gauge(value, title, min_val, max_val, warn_val, danger_val), use_container_width=True)
-
-display_parameter_status(
-    "🌡️ Suhu Motor", temp_motor, "°C", TEMP_MOTOR_PERINGATAN, TEMP_MOTOR_BAHAYA, 20, 120,
-    "Suhu motor berada dalam rentang **normal** dan aman.",
-    "Suhu motor telah memasuki level **peringatan**. Perlu perhatian lebih lanjut untuk mencegah overheating.",
-    "Suhu motor telah mencapai level **bahaya**. Risiko kerusakan komponen sangat tinggi."
-)
-
-display_parameter_status(
-    "🌡️ Suhu Bearing", max_temp_bearing, "°C", TEMP_BEARING_PERINGATAN, TEMP_BEARING_BAHAYA, 20, 120,
-    "Suhu bearing berada dalam kondisi **normal**.",
-    "Suhu bearing **meningkat** dan memasuki level **peringatan**. Ini bisa menjadi indikasi awal masalah lubrikasi atau keausan.",
-    "Suhu bearing sangat tinggi dan dalam kondisi **bahaya**. Risiko kegagalan bearing sangat besar."
-)
-
-display_parameter_status(
-    " shaky_face: Vibrasi", vibrasi_max_input, "mm/s", VIBRASI_PERINGATAN, VIBRASI_BAHAYA, 0, 10,
-    "Tingkat getaran mesin dalam batas **normal**.",
-    "Getaran mesin telah melebihi batas wajar dan masuk level **peringatan**. Ini bisa disebabkan oleh ketidakseimbangan atau awal kerusakan.",
-    "Tingkat getaran mesin sangat tinggi dan dalam kondisi **bahaya**. Risiko kerusakan struktural pada motor atau komponen terkait."
-)
 
 st.markdown("---")
 
-# --- BAGIAN 2: PROYEKSI FORECASTING DENGAN LAYOUT BARU ---
+# Layout 2x2 untuk gauges
+row1_col1, row1_col2 = st.columns(2)
+row2_col1, row2_col2 = st.columns(2)
+
+with row1_col1:
+    st.subheader("🌡️ Suhu Motor")
+    st.plotly_chart(create_modern_gauge(temp_motor, "Suhu Motor", 20, 120, TEMP_MOTOR_PERINGATAN, TEMP_MOTOR_BAHAYA), use_container_width=True)
+with row1_col2:
+    st.subheader("🌡️ Suhu Bearing")
+    st.plotly_chart(create_modern_gauge(max_temp_bearing, "Suhu Bearing", 20, 120, TEMP_BEARING_PERINGATAN, TEMP_BEARING_BAHAYA), use_container_width=True)
+with row2_col1:
+    st.subheader(" shaky_face: Vibrasi")
+    st.plotly_chart(create_modern_gauge(vibrasi_max_input, "Vibrasi", 0, 10, VIBRASI_PERINGATAN, VIBRASI_BAHAYA), use_container_width=True)
+with row2_col2:
+    st.subheader("⚡ Arus")
+    st.plotly_chart(create_modern_gauge(arus, "Arus", 0, 10, ARUS_PERINGATAN, ARUS_BAHAYA), use_container_width=True)
+
+st.markdown("---")
+
+# --- BAGIAN 2: ANALISA & PROYEKSI FORECASTING ---
 st.header("2. Analisa & Proyeksi Forecasting")
 
-# Fungsi untuk menghitung sisa waktu
 def hitung_waktu_prediksi(nilai_awal, laju_kenaikan, ambang_batas):
-    if laju_kenaikan <= 0:
-        return np.inf
-    if nilai_awal >= ambang_batas:
+    if laju_kenaikan <= 0 or nilai_awal >= ambang_batas:
         return 0
     return (ambang_batas - nilai_awal) / laju_kenaikan
 
-# Fungsi untuk menghitung proyeksi data
 def hitung_proyeksi(nilai_awal, laju_kenaikan, waktu_maks=48):
-    if laju_kenaikan > 0:
-        waktu = np.arange(0, waktu_maks + 1, 1)
-    else:
-        waktu = np.array([0, waktu_maks])
+    waktu = np.arange(0, waktu_maks + 1, 1)
     proyeksi = nilai_awal + laju_kenaikan * waktu
     return waktu, proyeksi
 
-# Cek apakah ada tren kenaikan
-has_trend = kenaikan_temp_motor_per_jam > 0 or kenaikan_temp_bearing_per_jam > 0 or kenaikan_vibrasi_per_jam > 0
+has_trend = any(k > 0 for k in [kenaikan_temp_motor_per_jam, kenaikan_temp_bearing_per_jam, kenaikan_vibrasi_per_jam, kenaikan_arus_per_jam])
 
 if not has_trend:
     st.info("Tidak ada tren kenaikan yang diinputkan. Grafik dan analisa proyeksi tidak ditampilkan.")
 else:
-    col_text, col_chart = st.columns([2, 3]) # Memberi ruang lebih untuk grafik
+    col_text, col_chart = st.columns([2, 3])
 
     with col_text:
         st.subheader("📝 Analisa Prediksi")
-        st.write("Berdasarkan tren kenaikan yang diinputkan, berikut adalah estimasi sisa waktu operasi sebelum mencapai ambang batas.")
-
-        # Analisa Suhu Motor
-        waktu_warn = hitung_waktu_prediksi(temp_motor, kenaikan_temp_motor_per_jam, TEMP_MOTOR_PERINGATAN)
-        waktu_danger = hitung_waktu_prediksi(temp_motor, kenaikan_temp_motor_per_jam, TEMP_MOTOR_BAHAYA)
-        if waktu_danger < np.inf and waktu_danger > 0:
-            st.metric(label="Prediksi Suhu Motor ke Bahaya", value=f"{waktu_danger:.1f} Jam")
-        elif waktu_danger == 0:
-            st.metric(label="Prediksi Suhu Motor ke Bahaya", value="Sudah Tercapai")
+        st.write("Estimasi sisa waktu operasi sebelum mencapai ambang batas bahaya, berdasarkan tren kenaikan yang diinputkan.")
         
-        # Analisa Suhu Bearing
-        waktu_warn = hitung_waktu_prediksi(max_temp_bearing, kenaikan_temp_bearing_per_jam, TEMP_BEARING_PERINGATAN)
-        waktu_danger = hitung_waktu_prediksi(max_temp_bearing, kenaikan_temp_bearing_per_jam, TEMP_BEARING_BAHAYA)
-        if waktu_danger < np.inf and waktu_danger > 0:
-            st.metric(label="Prediksi Suhu Bearing ke Bahaya", value=f"{waktu_danger:.1f} Jam")
-        elif waktu_danger == 0:
-             st.metric(label="Prediksi Suhu Bearing ke Bahaya", value="Sudah Tercapai")
-       
-        # Analisa Vibrasi
-        waktu_warn = hitung_waktu_prediksi(vibrasi_max_input, kenaikan_vibrasi_per_jam, VIBRASI_PERINGATAN)
-        waktu_danger = hitung_waktu_prediksi(vibrasi_max_input, kenaikan_vibrasi_per_jam, VIBRASI_BAHAYA)
-        if waktu_danger < np.inf and waktu_danger > 0:
-            st.metric(label="Prediksi Vibrasi ke Bahaya", value=f"{waktu_danger:.1f} Jam")
-        elif waktu_danger == 0:
-            st.metric(label="Prediksi Vibrasi ke Bahaya", value="Sudah Tercapai")
+        params = {
+            "Suhu Motor": (temp_motor, kenaikan_temp_motor_per_jam, TEMP_MOTOR_BAHAYA),
+            "Suhu Bearing": (max_temp_bearing, kenaikan_temp_bearing_per_jam, TEMP_BEARING_BAHAYA),
+            "Vibrasi": (vibrasi_max_input, kenaikan_vibrasi_per_jam, VIBRASI_BAHAYA),
+            "Arus": (arus, kenaikan_arus_per_jam, ARUS_BAHAYA)
+        }
 
+        for param, (val, rate, danger_thresh) in params.items():
+            if rate > 0:
+                waktu_danger = hitung_waktu_prediksi(val, rate, danger_thresh)
+                st.metric(label=f"Prediksi {param} ke Bahaya", value=f"{waktu_danger:.1f} Jam")
 
     with col_chart:
-        # Membuat Subplots
-        fig_forecast = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Proyeksi Suhu Motor', 'Proyeksi Suhu Bearing', 'Proyeksi Vibrasi'))
+        fig_forecast = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                                     subplot_titles=('Suhu Motor', 'Suhu Bearing', 'Vibrasi', 'Arus'))
         
-        # Proyeksi Suhu Motor
-        waktu, proyeksi = hitung_proyeksi(temp_motor, kenaikan_temp_motor_per_jam)
-        fig_forecast.add_trace(go.Scatter(x=waktu, y=proyeksi, mode='lines', name='Suhu Motor', line={'color':'#636EFA'}), row=1, col=1)
-        fig_forecast.add_hline(y=TEMP_MOTOR_PERINGATAN, line_dash="dash", line_color="orange", annotation_text="Peringatan", row=1, col=1)
-        fig_forecast.add_hline(y=TEMP_MOTOR_BAHAYA, line_dash="dash", line_color="red", annotation_text="Bahaya", row=1, col=1)
+        # Plot Suhu Motor
+        w, p = hitung_proyeksi(temp_motor, kenaikan_temp_motor_per_jam)
+        fig_forecast.add_trace(go.Scatter(x=w, y=p, name='Suhu Motor', line={'color':'#636EFA'}), row=1, col=1)
+        fig_forecast.add_hline(y=TEMP_MOTOR_BAHAYA, line_dash="dash", line_color="red", row=1, col=1)
+        
+        # Plot Suhu Bearing
+        w, p = hitung_proyeksi(max_temp_bearing, kenaikan_temp_bearing_per_jam)
+        fig_forecast.add_trace(go.Scatter(x=w, y=p, name='Suhu Bearing', line={'color':'#EF553B'}), row=2, col=1)
+        fig_forecast.add_hline(y=TEMP_BEARING_BAHAYA, line_dash="dash", line_color="red", row=2, col=1)
 
-        # Proyeksi Suhu Bearing
-        waktu, proyeksi = hitung_proyeksi(max_temp_bearing, kenaikan_temp_bearing_per_jam)
-        fig_forecast.add_trace(go.Scatter(x=waktu, y=proyeksi, mode='lines', name='Suhu Bearing', line={'color':'#EF553B'}), row=2, col=1)
-        fig_forecast.add_hline(y=TEMP_BEARING_PERINGATAN, line_dash="dash", line_color="orange", annotation_text="Peringatan", row=2, col=1)
-        fig_forecast.add_hline(y=TEMP_BEARING_BAHAYA, line_dash="dash", line_color="red", annotation_text="Bahaya", row=2, col=1)
+        # Plot Vibrasi
+        w, p = hitung_proyeksi(vibrasi_max_input, kenaikan_vibrasi_per_jam)
+        fig_forecast.add_trace(go.Scatter(x=w, y=p, name='Vibrasi', line={'color':'#00CC96'}), row=3, col=1)
+        fig_forecast.add_hline(y=VIBRASI_BAHAYA, line_dash="dash", line_color="red", row=3, col=1)
 
-        # Proyeksi Vibrasi
-        waktu, proyeksi = hitung_proyeksi(vibrasi_max_input, kenaikan_vibrasi_per_jam)
-        fig_forecast.add_trace(go.Scatter(x=waktu, y=proyeksi, mode='lines', name='Vibrasi', line={'color':'#00CC96'}), row=3, col=1)
-        fig_forecast.add_hline(y=VIBRASI_PERINGATAN, line_dash="dash", line_color="orange", annotation_text="Peringatan", row=3, col=1)
-        fig_forecast.add_hline(y=VIBRASI_BAHAYA, line_dash="dash", line_color="red", annotation_text="Bahaya", row=3, col=1)
+        # Plot Arus
+        w, p = hitung_proyeksi(arus, kenaikan_arus_per_jam)
+        fig_forecast.add_trace(go.Scatter(x=w, y=p, name='Arus', line={'color':'#AB63FA'}), row=4, col=1)
+        fig_forecast.add_hline(y=ARUS_BAHAYA, line_dash="dash", line_color="red", row=4, col=1)
 
-        # Update layout
-        fig_forecast.update_layout(height=600, showlegend=False, margin={'t':50, 'b':30})
-        fig_forecast.update_yaxes(title_text="Suhu (°C)", row=1, col=1)
-        fig_forecast.update_yaxes(title_text="Suhu (°C)", row=2, col=1)
-        fig_forecast.update_yaxes(title_text="Vibrasi (mm/s)", row=3, col=1)
-        fig_forecast.update_xaxes(title_text="Waktu (Jam ke Depan)", row=3, col=1)
-
+        fig_forecast.update_layout(height=700, showlegend=False, margin={'t':50, 'b':0})
+        fig_forecast.update_yaxes(title_text="°C", row=1, col=1); fig_forecast.update_yaxes(title_text="°C", row=2, col=1)
+        fig_forecast.update_yaxes(title_text="mm/s", row=3, col=1); fig_forecast.update_yaxes(title_text="A", row=4, col=1)
+        fig_forecast.update_xaxes(title_text="Waktu (Jam ke Depan)", row=4, col=1)
+        
         st.plotly_chart(fig_forecast, use_container_width=True)
 
 st.markdown("---")
-st.caption("Aplikasi Simulasi & Forecasting Kondisi Motor v3.0")
+st.caption("Aplikasi Simulasi & Forecasting Kondisi Motor v4.0")
