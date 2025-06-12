@@ -9,7 +9,6 @@ st.set_page_config(
 )
 
 # --- Konfigurasi Awal & Ambang Batas (Thresholds) ---
-# Nilai-nilai ini adalah contoh dan harus disesuaikan dengan spesifikasi motor Anda.
 VOLTAGE_NORMAL = 380
 ARUS_NORMAL = 5.0
 
@@ -56,106 +55,91 @@ st.title("🔮 Dashboard Forecasting & Kesehatan Motor Listrik")
 st.markdown("---")
 
 
-# --- BAGIAN 1: ANALISIS KONDISI SAAT INI ---
+# --- BAGIAN 1: ANALISIS KONDISI SAAT INI (***UPDATED***) ---
 st.header("1. Analisis Kondisi Saat Ini")
 
-# Logika Analisis Status
-status = "Normal"
+# Daftar untuk menampung pesan penyebab perubahan status
+pesan_penyebab = []
+status = "Normal"  # Status default
+
+# Analisis setiap variabel
 max_temp_bearing = max(temp_bearing_depan, temp_bearing_belakang)
 
-if temp_motor >= TEMP_MOTOR_BAHAYA or max_temp_bearing >= TEMP_BEARING_BAHAYA or arus >= ARUS_BAHAYA or vibrasi_max_input >= VIBRASI_BAHAYA:
+# Cek Suhu Motor
+if temp_motor >= TEMP_MOTOR_BAHAYA:
     status = "Bahaya"
-elif temp_motor >= TEMP_MOTOR_PERINGATAN or max_temp_bearing >= TEMP_BEARING_PERINGATAN or arus >= ARUS_PERINGATAN or vibrasi_max_input >= VIBRASI_PERINGATAN:
+    pesan_penyebab.append(f"🔥 **Suhu Motor Kritis**: `{temp_motor}°C` (Batas: {TEMP_MOTOR_BAHAYA}°C)")
+elif temp_motor >= TEMP_MOTOR_PERINGATAN:
     status = "Peringatan"
+    pesan_penyebab.append(f"⚠️ **Suhu Motor Tinggi**: `{temp_motor}°C` (Batas: {TEMP_MOTOR_PERINGATAN}°C)")
+
+# Cek Suhu Bearing
+if max_temp_bearing >= TEMP_BEARING_BAHAYA:
+    if status != "Bahaya": status = "Bahaya"
+    pesan_penyebab.append(f"🔥 **Suhu Bearing Kritis**: `{max_temp_bearing}°C` (Batas: {TEMP_BEARING_BAHAYA}°C)")
+elif max_temp_bearing >= TEMP_BEARING_PERINGATAN:
+    if status == "Normal": status = "Peringatan"
+    pesan_penyebab.append(f"⚠️ **Suhu Bearing Tinggi**: `{max_temp_bearing}°C` (Batas: {TEMP_BEARING_PERINGATAN}°C)")
+
+# Cek Arus
+if arus >= ARUS_BAHAYA:
+    if status != "Bahaya": status = "Bahaya"
+    pesan_penyebab.append(f"⚡ **Arus Sangat Tinggi (Overload)**: `{arus:.1f} A` (Batas: {ARUS_BAHAYA:.1f} A)")
+elif arus >= ARUS_PERINGATAN:
+    if status == "Normal": status = "Peringatan"
+    pesan_penyebab.append(f"⚡ **Arus Melebihi Normal**: `{arus:.1f} A` (Batas: {ARUS_PERINGATAN:.1f} A)")
+
+# Cek Vibrasi
+if vibrasi_max_input >= VIBRASI_BAHAYA:
+    if status != "Bahaya": status = "Bahaya"
+    pesan_penyebab.append(f"🚨 **Vibrasi Kritis**: `{vibrasi_max_input:.1f} mm/s` (Batas: {VIBRASI_BAHAYA} mm/s)")
+elif vibrasi_max_input >= VIBRASI_PERINGATAN:
+    if status == "Normal": status = "Peringatan"
+    pesan_penyebab.append(f"🚨 **Vibrasi Tinggi**: `{vibrasi_max_input:.1f} mm/s` (Batas: {VIBRASI_PERINGATAN} mm/s)")
 
 # Tampilkan Status Utama
 if status == "Normal":
     st.success("✅ **KONDISI SAAT INI: NORMAL**")
-    st.write("Semua parameter operasional motor berada dalam batas aman.")
-elif status == "Peringatan":
-    st.warning("⚠️ **KONDISI SAAT INI: PERINGATAN**")
-    st.write("Terdeteksi satu atau lebih parameter yang melebihi ambang batas wajar.")
 else:
-    st.error("🛑 **KONDISI SAAT INI: BAHAYA**")
-    st.write("Parameter kritis terdeteksi! Berisiko menyebabkan kerusakan motor.")
+    # Tampilkan penyebabnya terlebih dahulu
+    st.write("#### Detail Penyebab Perubahan Status:")
+    for pesan in pesan_penyebab:
+        st.write(f"&bull; {pesan}")
+    
+    # Baru tampilkan status keseluruhan
+    if status == "Peringatan":
+        st.warning("⚠️ **KONDISI KESELURUHAN: PERINGATAN**")
+    else: # Bahaya
+        st.error("🛑 **KONDISI KESELURUHAN: BAHAYA**")
 
 st.markdown("---")
 
 # --- BAGIAN 2: PREDIKSI & PROGNOSTIK (FORECASTING) ---
 st.header("2. Prediksi & Prognostik (Forecasting)")
 
-# Fungsi untuk menghitung sisa waktu
 def hitung_sisa_waktu(nilai_sekarang, laju_kenaikan, ambang_batas):
-    """Menghitung waktu (dalam jam) hingga nilai sekarang mencapai ambang batas."""
     if laju_kenaikan <= 0:
-        return np.inf  # Tidak akan pernah tercapai jika tidak ada kenaikan
+        return np.inf
     if nilai_sekarang >= ambang_batas:
-        return 0  # Sudah melewati ambang batas
-    
-    sisa_waktu = (ambang_batas - nilai_sekarang) / laju_kenaikan
-    return sisa_waktu
+        return 0
+    return (ambang_batas - nilai_sekarang) / laju_kenaikan
 
-# Lakukan kalkulasi untuk setiap parameter
-waktu_prediksi = []
+waktu_prediksi = [
+    {'parameter': 'Suhu Motor', 'waktu_ke_bahaya': hitung_sisa_waktu(temp_motor, kenaikan_temp_motor_per_jam, TEMP_MOTOR_BAHAYA)},
+    {'parameter': 'Suhu Bearing', 'waktu_ke_bahaya': hitung_sisa_waktu(max_temp_bearing, kenaikan_temp_bearing_per_jam, TEMP_BEARING_BAHAYA)},
+    {'parameter': 'Vibrasi', 'waktu_ke_bahaya': hitung_sisa_waktu(vibrasi_max_input, kenaikan_vibrasi_per_jam, VIBRASI_BAHAYA)}
+]
 
-# Prediksi Suhu Motor
-waktu_prediksi.append({
-    'parameter': 'Suhu Motor',
-    'waktu_ke_peringatan': hitung_sisa_waktu(temp_motor, kenaikan_temp_motor_per_jam, TEMP_MOTOR_PERINGATAN),
-    'waktu_ke_bahaya': hitung_sisa_waktu(temp_motor, kenaikan_temp_motor_per_jam, TEMP_MOTOR_BAHAYA),
-})
-
-# Prediksi Suhu Bearing (menggunakan suhu bearing tertinggi saat ini)
-waktu_prediksi.append({
-    'parameter': 'Suhu Bearing',
-    'waktu_ke_peringatan': hitung_sisa_waktu(max_temp_bearing, kenaikan_temp_bearing_per_jam, TEMP_BEARING_PERINGATAN),
-    'waktu_ke_bahaya': hitung_sisa_waktu(max_temp_bearing, kenaikan_temp_bearing_per_jam, TEMP_BEARING_BAHAYA),
-})
-
-# Prediksi Vibrasi
-waktu_prediksi.append({
-    'parameter': 'Vibrasi',
-    'waktu_ke_peringatan': hitung_sisa_waktu(vibrasi_max_input, kenaikan_vibrasi_per_jam, VIBRASI_PERINGATAN),
-    'waktu_ke_bahaya': hitung_sisa_waktu(vibrasi_max_input, kenaikan_vibrasi_per_jam, VIBRASI_BAHAYA),
-})
-
-# Cari prediksi waktu terdekat menuju status BAHAYA
 prediksi_terdekat = min(p['waktu_ke_bahaya'] for p in waktu_prediksi)
-parameter_kritis = [p['parameter'] for p in waktu_prediksi if p['waktu_ke_bahaya'] == prediksi_terdekat][0]
-
-
 if prediksi_terdekat == np.inf:
     st.info("Tidak ada tren kenaikan yang diinputkan. Prediksi tidak dapat dibuat.")
 elif prediksi_terdekat == 0:
-    st.error(f"**Motor sudah dalam kondisi BAHAYA karena {parameter_kritis}.**")
+    st.error("**Motor sudah berada dalam atau di atas ambang batas Bahaya.**")
 else:
-    # Tampilkan metrik utama prediksi
+    parameter_kritis = [p['parameter'] for p in waktu_prediksi if p['waktu_ke_bahaya'] == prediksi_terdekat][0]
     st.metric(
         label=f"Prediksi Status BAHAYA Pertama dalam",
         value=f"~{prediksi_terdekat:.1f} Jam",
         delta=f"Disebabkan oleh tren kenaikan {parameter_kritis}",
         delta_color="inverse"
     )
-
-    st.write("#### Rincian Waktu Prediksi menuju Ambang Batas")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.write(f"##### Suhu Motor")
-        p = waktu_prediksi[0]
-        st.write(f"Menuju Peringatan: `{p['waktu_ke_peringatan']:.1f} jam`")
-        st.write(f"Menuju Bahaya: `{p['waktu_ke_bahaya']:.1f} jam`")
-    
-    with col2:
-        st.write(f"##### Suhu Bearing")
-        p = waktu_prediksi[1]
-        st.write(f"Menuju Peringatan: `{p['waktu_ke_peringatan']:.1f} jam`")
-        st.write(f"Menuju Bahaya: `{p['waktu_ke_bahaya']:.1f} jam`")
-
-    with col3:
-        st.write(f"##### Vibrasi")
-        p = waktu_prediksi[2]
-        st.write(f"Menuju Peringatan: `{p['waktu_ke_peringatan']:.1f} jam`")
-        st.write(f"Menuju Bahaya: `{p['waktu_ke_bahaya']:.1f} jam`")
-
-st.caption("Catatan: `inf jam` berarti parameter tidak akan mencapai ambang batas dengan tren kenaikan saat ini.")
